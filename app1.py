@@ -1,82 +1,36 @@
 import streamlit as st
 import pandas as pd
-import base64
-import matplotlib.pyplot as plt
 import numpy as np
-import yfinance as yf
 
-st.title('Random APP')
+st.title('Uber pickups in NYC')
 
-st.markdown("""
-Thissssssssssss app retrieves the list of the **S&P 500** (from Wikipedia) and its corresponding **stock closing price** (year-to-date)!
-* **Python libraries:** base64, pandas, streamlit, yfinance, numpy, matplotlib
-* **Data source:** [Wikipedia](https://en.wikipedia.org/wiki/List_of_S%26P_500_companies).
-""")
+DATE_COLUMN = 'date/time'
+DATA_URL = ('https://s3-us-west-2.amazonaws.com/'
+            'streamlit-demo-data/uber-raw-data-sep14.csv.gz')
 
-st.sidebar.header('User Input Features')
+@st.cache_data
+def load_data(nrows):
+    data = pd.read_csv(DATA_URL, nrows=nrows)
+    lowercase = lambda x: str(x).lower()
+    data.rename(lowercase, axis='columns', inplace=True)
+    data[DATE_COLUMN] = pd.to_datetime(data[DATE_COLUMN])
+    return data
 
-# Web scraping of S&P 500 data
-#
-@st.cache
-def load_data():
-    url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-    html = pd.read_html(url, header = 0)
-    df = html[0]
-    return df
+data_load_state = st.text('Loading data...')
+data = load_data(10000)
+data_load_state.text("Done! (using st.cache_data)")
 
-df = load_data()
-sector = df.groupby('GICS Sector')
+if st.checkbox('Show raw data'):
+    st.subheader('Raw data')
+    st.write(data)
 
-# Sidebar - Sector selection
-sorted_sector_unique = sorted( df['GICS Sector'].unique() )
-selected_sector = st.sidebar.multiselect('Sector', sorted_sector_unique, sorted_sector_unique)
+st.subheader('Number of pickups by hour')
+hist_values = np.histogram(data[DATE_COLUMN].dt.hour, bins=24, range=(0,24))[0]
+st.bar_chart(hist_values)
 
-# Filtering data
-df_selected_sector = df[ (df['GICS Sector'].isin(selected_sector)) ]
+# Some number in the range 0-23
+hour_to_filter = st.slider('hour', 0, 23, 17)
+filtered_data = data[data[DATE_COLUMN].dt.hour == hour_to_filter]
 
-st.header('Display Companies in Selected Sector')
-st.write('Data Dimension: ' + str(df_selected_sector.shape[0]) + ' rows and ' + str(df_selected_sector.shape[1]) + ' columns.')
-st.dataframe(df_selected_sector)
-
-# Download S&P500 data
-# https://discuss.streamlit.io/t/how-to-download-file-in-streamlit/1806
-def filedownload(df):
-    csv = df.to_csv(index=False)
-    b64 = base64.b64encode(csv.encode()).decode()  # strings <-> bytes conversions
-    href = f'<a href="data:file/csv;base64,{b64}" download="SP500.csv">Download CSV File</a>'
-    return href
-
-st.markdown(filedownload(df_selected_sector), unsafe_allow_html=True)
-
-# https://pypi.org/project/yfinance/
-
-data = yf.download(
-        tickers = list(df_selected_sector[:10].Symbol),
-        period = "ytd",
-        interval = "1d",
-        group_by = 'ticker',
-        auto_adjust = True,
-        prepost = True,
-        threads = True,
-        proxy = None
-    )
-
-# Plot Closing Price of Query Symbol
-def price_plot(symbol):
-  df = pd.DataFrame(data[symbol].Close)
-  df['Date'] = df.index
-  fig = plt.figure()
-  plt.fill_between(df.Date, df.Close, color='skyblue', alpha=0.3)
-  plt.plot(df.Date, df.Close, color='skyblue', alpha=0.8)
-  plt.xticks(rotation=90)
-  plt.title(symbol, fontweight='bold')
-  plt.xlabel('Date', fontweight='bold')
-  plt.ylabel('Closing Price', fontweight='bold')
-  return st.pyplot(fig)
-
-num_company = st.sidebar.slider('Number of Companies', 1, 5)
-
-if st.button('Show Plots'):
-    st.header('Stock Closing Price')
-    for i in list(df_selected_sector.Symbol)[:num_company]:
-        price_plot(i)
+st.subheader('Map of all pickups at %s:00' % hour_to_filter)
+st.map(filtered_data)
